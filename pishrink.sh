@@ -163,7 +163,7 @@ Before=ssh.service
 [Service]
 Type=oneshot
 ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/machine-id"
-ExecStart=dbus-uuidgen --ensure=/etc/machine-id
+ExecStart=/bin/sh "/usr/bin/dbus-uuidgen --ensure=/etc/machine-id"
 ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_machine_id.service"
 
 [Install]
