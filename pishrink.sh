@@ -129,7 +129,8 @@ if [ "$cleanup_image" = true ]; then
   rm -f $mountdir/var/cache/apt/archives/*.deb
   rm -f $mountdir/var/cache/apt/archives/partial/*
   # remove log files
-  rm -f $mountdir/var/log/*
+  rm -f $mountdir/var/log/*.log
+  rm -f $mountdir/var/log/syslog*
   # clean up bash history
   rm -f $mountdir/home/pi/.bash_history
   
@@ -145,12 +146,14 @@ Before=ssh.service
 Type=oneshot
 ExecStartPre=-/bin/dd if=/dev/hwrng of=/dev/urandom count=1 bs=4096
 ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/ssh/ssh_host_*_key*"
-ExecStart=/usr/bin/ssh-keygen -A -v
+ExecStart=/bin/sh -c "/usr/bin/ssh-keygen -A -v"
 ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_ssh_host_keys.service"
+ExecStartPost=/bin/sh -c "/bin/rm -f -v /etc/systemd/system/multi-user.target.wants/regenerate_ssh_host_keys.service"
 
 [Install]
 WantedBy=multi-user.target
 EOF
+  ln -s $mountdir/lib/systemd/system/regenerate_ssh_host_keys.service $mountdir/etc/systemd/system/multi-user.target.wants/regenerate_ssh_host_keys.service
 
   echo "Removing the machine-id"
   rm -f -v $mountdir/etc/machine-id
@@ -163,12 +166,14 @@ Before=ssh.service
 [Service]
 Type=oneshot
 ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/machine-id"
-ExecStart=/bin/sh "/usr/bin/dbus-uuidgen --ensure=/etc/machine-id"
+ExecStart=/bin/sh -c "/usr/bin/dbus-uuidgen --ensure=/etc/machine-id"
 ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_machine_id.service"
+ExecStartPost=/bin sh -c "bin/rm -f -v /etc/systemd/system/multi-user.target.wants/regenerate_machine_id.service"
 
 [Install]
 WantedBy=multi-user.target
 EOF
+  ln -s $mountdir/lib/systemd/system/regenerate_machine_id.service $mountdir/etc/systemd/system/multi-user.target.wants/regenerate_machine_id.service
   umount "$mountdir"
 fi
 
