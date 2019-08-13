@@ -35,15 +35,17 @@ function logVariables() {
 	fi
 }
 
-usage() { echo "Usage: $0 [-sd] imagefile.img [newimagefile.img]"; exit -1; }
+usage() { echo "Usage: $0 [-sdc] imagefile.img [newimagefile.img]"; exit -1; }
 
 should_skip_autoexpand=false
 debug=false
+cleanup_image=false
 
-while getopts ":sd" opt; do
+while getopts ":sdc" opt; do
   case "${opt}" in
     s) should_skip_autoexpand=true ;;
     d) debug=true;;
+    c) cleanup_image=true ;;
     *) usage ;;
   esac
 done
@@ -116,6 +118,39 @@ currentsize=$(echo "$tune2fs_output" | grep '^Block count:' | tr -d ' ' | cut -d
 blocksize=$(echo "$tune2fs_output" | grep '^Block size:' | tr -d ' ' | cut -d ':' -f 2)
 
 logVariables $LINENO tune2fs_output currentsize blocksize
+
+# Remove ssh keys if requested
+if [ "$cleanup_image" = true ]; then
+  mountdir=$(mktemp -d)
+  mount "$loopback" "$mountdir"
+
+  echo "Removing old files..."
+  # cleanup apt cache
+  rm -f $mountdir/var/cache/apt/archives/*.deb
+  rm -f $mountdir/var/cache/apt/archives/partial/*
+  # remove log files
+  rm -f $mountdir/var/log/*.log
+  
+  echo "Removing ssh keys..."
+  # Remove keys and create script to recreate them on next boot
+  rm -f -v $mountdir/etc/ssh/ssh_host_*_key*
+  cat <<\EOF > "$mountdir/lib/systemd/system/regenerate_ssh_host_keys.service"
+[Unit]
+Description=Regenerate SSH host keys
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStartPre=-/bin/dd if=/dev/hwrng of=/dev/urandom count=1 bs=4096
+ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/ssh/ssh_host_*_key*"
+ExecStart=/usr/bin/ssh-keygen -A -v
+ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_ssh_host_keys.service"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  umount "$mountdir"
+fi
 
 #Check if we should make pi expand rootfs on next boot
 if [ "$should_skip_autoexpand" = false ]; then
