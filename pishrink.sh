@@ -129,7 +129,7 @@ if [ "$cleanup_image" = true ]; then
   rm -f $mountdir/var/cache/apt/archives/*.deb
   rm -f $mountdir/var/cache/apt/archives/partial/*
   # remove log files
-  rm -f $mountdir/var/log/*.log
+  rm -f $mountdir/var/log/*
   # clean up bash history
   rm -f $mountdir/home/pi/.bash_history
   
