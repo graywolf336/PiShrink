@@ -130,6 +130,8 @@ if [ "$cleanup_image" = true ]; then
   rm -f $mountdir/var/cache/apt/archives/partial/*
   # remove log files
   rm -f $mountdir/var/log/*.log
+  # clean up bash history
+  rm -f $mountdir/home/pi/.bash_history
   
   echo "Removing ssh keys..."
   # Remove keys and create script to recreate them on next boot
@@ -145,6 +147,24 @@ ExecStartPre=-/bin/dd if=/dev/hwrng of=/dev/urandom count=1 bs=4096
 ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/ssh/ssh_host_*_key*"
 ExecStart=/usr/bin/ssh-keygen -A -v
 ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_ssh_host_keys.service"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  echo "Removing the machine-id"
+  rm -f -v $mountdir/etc/machine-id
+  # Remove the machine id and create a script to regenerate it on next boot
+  cat <<\EOF > "$mountdir/lib/systemd/system/regenerate_machine_id.service"
+[Unit]
+Description=Regenerate machine-id
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/machine-id"
+ExecStart=dbus-uuidgen --ensure=/etc/machine-id
+ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_machine_id.service"
 
 [Install]
 WantedBy=multi-user.target
