@@ -1,24 +1,28 @@
 #!/bin/bash
 
-version="v0.1"
+version="v0.1.2"
+
+CURRENT_DIR=$(pwd)
+SCRIPTNAME="${0##*/}"
+LOGFILE=${CURRENT_DIR}/${SCRIPTNAME%.*}.log
 
 function info() {
-	echo "$1..."
+	echo "$SCRIPTNAME: $1..."
 }
 
 function error() {
-	echo -n "ERROR occured in line $1: "
+	echo -n "$SCRIPTNAME: ERROR occured in line $1: "
 	shift
 	echo "$@"
 }
 
 function cleanup() {
-	if losetup $loopback &>/dev/null; then
+	if losetup "$loopback" &>/dev/null; then
 		losetup -d "$loopback"
 	fi
 	if [ "$debug" = true ]; then
 		local old_owner=$(stat -c %u:%g "$src")
-		chown $old_owner "$LOGFILE"
+		chown "$old_owner" "$LOGFILE"
 	fi
 
 }
@@ -30,32 +34,81 @@ function logVariables() {
 		local v var
 		for var in "$@"; do
 			eval "v=\$$var"
-			echo "$var: $v" >> $LOGFILE
+			echo "$var: $v" >> "$LOGFILE"
 		done
 	fi
 }
 
-usage() { echo "Usage: $0 [-sd] imagefile.img [newimagefile.img]"; exit -1; }
+function checkFilesystem() {
+	info "Checking filesystem"
+	e2fsck -pf "$loopback"
+	(( $? < 4 )) && return
+
+	info "Filesystem error detected!"
+
+	info "Trying to recover corrupted filesystem"
+	e2fsck -y "$loopback"
+	(( $? < 4 )) && return
+
+if [[ $repair == true ]]; then
+	info "Trying to recover corrupted filesystem - Phase 2"
+	e2fsck -fy -b 32768 "$loopback"
+	(( $? < 4 )) && return
+fi
+	error $LINENO "Filesystem recoveries failed. Giving up..."
+	exit -9
+
+}
+
+help() {
+	local help
+	read -r -d '' help << EOM
+Usage: $0 [-sdrpzh] imagefile.img [newimagefile.img]
+
+  -s: Don't expand filesystem when image is booted the first time
+  -d: Write debug messages in a debug log file
+  -r: Use advanced filesystem repair option if the normal one fails
+  -p: Remove logs, apt archives, dhcp leases and ssh hostkeys
+  -z: Gzip compress image after shrinking
+EOM
+	echo "$help"
+	exit -1
+}
+
+usage() {
+	echo "Usage: $0 [-sdrpzh] imagefile.img [newimagefile.img]"
+	echo ""
+	echo "  -s: Skip autoexpand"
+	echo "  -d: Debug mode on"
+	echo "  -r: Use advanced repair options"
+	echo "  -p: Remove logs, apt archives, dhcp leases and ssh hostkeys"
+	echo "  -z: Gzip compress image after shrinking"
+	echo "  -h: display help text"
+	exit -1
+}
 
 should_skip_autoexpand=false
 debug=false
+repair=false
+gzip_compress=false
+prep=false
 
-while getopts ":sd" opt; do
+while getopts ":sdrpzh" opt; do
   case "${opt}" in
     s) should_skip_autoexpand=true ;;
     d) debug=true;;
+    r) repair=true;;
+    p) prep=true;;
+    z) gzip_compress=true;;
+    h) help;;
     *) usage ;;
   esac
 done
 shift $((OPTIND-1))
 
-CURRENT_DIR=$(pwd)
-SCRIPTNAME="${0##*/}"
-LOGFILE=${CURRENT_DIR}/${SCRIPTNAME%.*}.log
-
 if [ "$debug" = true ]; then
 	info "Creating log file $LOGFILE"
-	rm $LOGFILE &>/dev/null
+	rm "$LOGFILE" &>/dev/null
 	exec 1> >(stdbuf -i0 -o0 -e0 tee -a "$LOGFILE" >&1)
 	exec 2> >(stdbuf -i0 -o0 -e0 tee -a "$LOGFILE" >&2)
 fi
@@ -81,7 +134,7 @@ fi
 
 #Check that what we need is installed
 for command in parted losetup tune2fs md5sum e2fsck resize2fs; do
-  which $command 2>&1 >/dev/null
+  command -v $command >/dev/null 2>&1
   if (( $? != 0 )); then
     error $LINENO "$command is not installed."
     exit -4
@@ -97,7 +150,7 @@ if [ -n "$2" ]; then
     exit -5
   fi
   old_owner=$(stat -c %u:%g "$1")
-  chown $old_owner "$2"
+  chown "$old_owner" "$2"
   img="$2"
 fi
 
@@ -105,12 +158,12 @@ fi
 trap cleanup ERR EXIT
 
 #Gather info
-info "Gatherin data"
+info "Gathering data"
 beforesize=$(ls -lh "$img" | cut -d ' ' -f 5)
 parted_output=$(parted -ms "$img" unit B print | tail -n 1)
 partnum=$(echo "$parted_output" | cut -d ':' -f 1)
 partstart=$(echo "$parted_output" | cut -d ':' -f 2 | tr -d 'B')
-loopback=$(losetup -f --show -o $partstart "$img")
+loopback=$(losetup -f --show -o "$partstart" "$img")
 tune2fs_output=$(tune2fs -l "$loopback")
 currentsize=$(echo "$tune2fs_output" | grep '^Block count:' | tr -d ' ' | cut -d ':' -f 2)
 blocksize=$(echo "$tune2fs_output" | grep '^Block size:' | tr -d ' ' | cut -d ':' -f 2)
@@ -123,7 +176,7 @@ if [ "$should_skip_autoexpand" = false ]; then
   mountdir=$(mktemp -d)
   mount "$loopback" "$mountdir"
 
-  if [ $(md5sum "$mountdir/etc/rc.local" | cut -d ' ' -f 1) != "0542054e9ff2d2e0507ea1ffe7d4fc87" ]; then
+  if [ "$(md5sum "$mountdir/etc/rc.local" | cut -d ' ' -f 1)" != "0542054e9ff2d2e0507ea1ffe7d4fc87" ]; then
     echo "Creating new /etc/rc.local"
     mv "$mountdir/etc/rc.local" "$mountdir/etc/rc.local.bak"
     #####Do not touch the following lines#####
@@ -193,20 +246,24 @@ else
   echo "Skipping autoexpanding process..."
 fi
 
-#Make sure filesystem is ok
-info "Checking filesystem"
-if ! e2fsck -p -f "$loopback"; then
-	rc=$?
-	error $LINENO "fsck failed with rc $rc"
-	exit -9
+if [[ $prep == true ]]; then
+  info "Syspreping: Removing logs, apt archives, dhcp leases and ssh hostkeys"
+  mountdir=$(mktemp -d)
+  mount "$loopback" "$mountdir"
+  rm -rf "$mountdir/var/cache/apt/archives/*" "$mountdir/var/lib/dhcpcd5/*" "$mountdir/var/log/*" "$mountdir/var/tmp/*" "$mountdir/tmp/*" "$mountdir/etc/ssh/*_host_*" 
+  umount "$mountdir"
 fi
+
+
+#Make sure filesystem is ok
+checkFilesystem
 
 if ! minsize=$(resize2fs -P "$loopback"); then
 	rc=$?
 	error $LINENO "resize2fs failed with rc $rc"
 	exit -10
 fi
-minsize=$(cut -d ':' -f 2 <<< $minsize | tr -d ' ')
+minsize=$(cut -d ':' -f 2 <<< "$minsize" | tr -d ' ')
 logVariables $LINENO minsize
 if [[ $currentsize -eq $minsize ]]; then
   error $LINENO "Image already shrunk to smallest size"
@@ -241,13 +298,13 @@ sleep 1
 partnewsize=$(($minsize * $blocksize))
 newpartend=$(($partstart + $partnewsize))
 logVariables $LINENO partnewsize newpartend
-if ! parted -s -a minimal "$img" rm $partnum; then
+if ! parted -s -a minimal "$img" rm "$partnum"; then
 	rc=$?
 	error $LINENO "parted failed with rc $rc"
 	exit -13
 fi
 
-if ! parted -s "$img" unit B mkpart primary $partstart $newpartend; then
+if ! parted -s "$img" unit B mkpart primary "$partstart" "$newpartend"; then
 	rc=$?
 	error $LINENO "parted failed with rc $rc"
 	exit -14
@@ -261,12 +318,19 @@ if ! endresult=$(parted -ms "$img" unit B print free); then
 	exit -15
 fi
 
-endresult=$(tail -1 <<< $endresult | cut -d ':' -f 2 | tr -d 'B')
+endresult=$(tail -1 <<< "$endresult" | cut -d ':' -f 2 | tr -d 'B')
 logVariables $LINENO endresult
-if ! truncate -s $endresult "$img"; then
+if ! truncate -s "$endresult" "$img"; then
 	rc=$?
 	error $LINENO "trunate failed with rc $rc"
 	exit -16
+fi
+
+if [[ $gzip_compress == true ]]; then
+    info "Gzipping the shrunk image"
+    if [[ ! $(gzip -f9 "$img") ]]; then
+        img=$img.gz
+    fi
 fi
 
 aftersize=$(ls -lh "$img" | cut -d ' ' -f 5)

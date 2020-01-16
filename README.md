@@ -1,10 +1,24 @@
+
 # PiShrink #
 PiShrink is a bash script that automatically shrink a pi image that will then resize to the max size of the SD card on boot. This will make putting the image back onto the SD card faster and the shrunk images will compress better.
 
 ## Usage ##
-`sudo pishrink.sh [-s] imagefile.img [newimagefile.img]`
+```
+sudo pishrink.sh [-sdrzh] imagefile.img [newimagefile.img]
+  -s: Skip autoexpand
+  -d: Debug mode on
+  -r: Use advanced repair options
+  -z: Gzip compress image after shrinking
+  -h: display help text
+```
 
-If the `-s` option is given the script will skip the autoexpanding part of the process.  If you specify the `newimagefile.img` parameter, the script will make a copy of `imagefile.img` and work off that. You will need enough space to make a full copy of the image to use that option.
+If you specify the `newimagefile.img` parameter, the script will make a copy of `imagefile.img` and work off that. You will need enough space to make a full copy of the image to use that option.
+
+* `-s` will skip the autoexpanding part of the process.
+* `-d` will create a logfile `pishrink.log` which may help for problem analysis.
+* `-r` will attempt to repair the filesystem if regular repairs fail
+* `-z` will Gzip compress the image after shrinking. The `.gz` extension will be added to the filename.
+
 
 ## Prerequisites ##
 If you are trying to shrink a [NOOBS](https://github.com/raspberrypi/noobs) image it will likely fail. This is due to [NOOBS partitioning](https://github.com/raspberrypi/noobs/wiki/NOOBS-partitioning-explained) being significantly different than Raspbian's. Hopefully PiShrink will be able to support NOOBS in the near future.
