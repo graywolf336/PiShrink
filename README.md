@@ -4,12 +4,13 @@ PiShrink is a bash script that automatically shrink a pi image that will then re
 
 ## Usage ##
 ```
-sudo pishrink.sh [-sdrzh] imagefile.img [newimagefile.img]
+sudo pishrink.sh [-sdrzhc] imagefile.img [newimagefile.img]
   -s: Skip autoexpand
   -d: Debug mode on
   -r: Use advanced repair options
   -z: Gzip compress image after shrinking
   -h: display help text
+  -c: clean up the image even more
 ```
 
 If you specify the `newimagefile.img` parameter, the script will make a copy of `imagefile.img` and work off that. You will need enough space to make a full copy of the image to use that option.
@@ -19,6 +20,14 @@ If you specify the `newimagefile.img` parameter, the script will make a copy of 
 * `-r` will attempt to repair the filesystem if regular repairs fail
 * `-z` will Gzip compress the image after shrinking. The `.gz` extension will be added to the filename.
 
+
+The `-c` option will clean the image up a little bit before shrinking it. Currently this will
+
+  - Remove the ssh host keys and install a script to re-generate them on first boot
+  - Remove cached debian packages from /var/cache/apt
+  - Remove old log files
+
+The `-c` option is intended to be used when preparing an image for use on a different Pi or for distribution.
 
 ## Prerequisites ##
 If you are trying to shrink a [NOOBS](https://github.com/raspberrypi/noobs) image it will likely fail. This is due to [NOOBS partitioning](https://github.com/raspberrypi/noobs/wiki/NOOBS-partitioning-explained) being significantly different than Raspbian's. Hopefully PiShrink will be able to support NOOBS in the near future.

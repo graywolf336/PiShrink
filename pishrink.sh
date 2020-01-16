@@ -67,6 +67,7 @@ Usage: $0 [-sdrpzh] imagefile.img [newimagefile.img]
 
   -s: Don't expand filesystem when image is booted the first time
   -d: Write debug messages in a debug log file
+  -c: Clean up image leftovers
   -r: Use advanced filesystem repair option if the normal one fails
   -p: Remove logs, apt archives, dhcp leases and ssh hostkeys
   -z: Gzip compress image after shrinking
@@ -76,10 +77,11 @@ EOM
 }
 
 usage() {
-	echo "Usage: $0 [-sdrpzh] imagefile.img [newimagefile.img]"
+	echo "Usage: $0 [-sdcrpzh] imagefile.img [newimagefile.img]"
 	echo ""
 	echo "  -s: Skip autoexpand"
 	echo "  -d: Debug mode on"
+  echo "  -c: Clean up image leftovers"
 	echo "  -r: Use advanced repair options"
 	echo "  -p: Remove logs, apt archives, dhcp leases and ssh hostkeys"
 	echo "  -z: Gzip compress image after shrinking"
@@ -89,6 +91,7 @@ usage() {
 
 should_skip_autoexpand=false
 debug=false
+cleanup_image=false
 repair=false
 gzip_compress=false
 prep=false
@@ -97,6 +100,7 @@ while getopts ":sdrpzh" opt; do
   case "${opt}" in
     s) should_skip_autoexpand=true ;;
     d) debug=true;;
+    c) cleanup_image=true ;;
     r) repair=true;;
     p) prep=true;;
     z) gzip_compress=true;;
@@ -169,6 +173,57 @@ currentsize=$(echo "$tune2fs_output" | grep '^Block count:' | tr -d ' ' | cut -d
 blocksize=$(echo "$tune2fs_output" | grep '^Block size:' | tr -d ' ' | cut -d ':' -f 2)
 
 logVariables $LINENO tune2fs_output currentsize blocksize
+
+# Remove ssh keys if requested
+if [ "$cleanup_image" = true ]; then
+  mountdir=$(mktemp -d)
+  mount "$loopback" "$mountdir"
+
+  # clean up bash history
+  rm -f $mountdir/home/pi/.bash_history
+  
+  echo "Removing ssh keys..."
+  # Remove keys and create script to recreate them on next boot
+  rm -f -v $mountdir/etc/ssh/ssh_host_*_key*
+  cat <<\EOF > "$mountdir/lib/systemd/system/regenerate_ssh_host_keys.service"
+[Unit]
+Description=Regenerate SSH host keys
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStartPre=-/bin/dd if=/dev/hwrng of=/dev/urandom count=1 bs=4096
+ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/ssh/ssh_host_*_key*"
+ExecStart=/bin/sh -c "/usr/bin/ssh-keygen -A -v"
+ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_ssh_host_keys.service"
+ExecStartPost=/bin/sh -c "/bin/rm -f -v /etc/systemd/system/multi-user.target.wants/regenerate_ssh_host_keys.service"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  ln -s $mountdir/lib/systemd/system/regenerate_ssh_host_keys.service $mountdir/etc/systemd/system/multi-user.target.wants/regenerate_ssh_host_keys.service
+
+  echo "Removing the machine-id"
+  rm -f -v $mountdir/etc/machine-id
+  # Remove the machine id and create a script to regenerate it on next boot
+  cat <<\EOF > "$mountdir/lib/systemd/system/regenerate_machine_id.service"
+[Unit]
+Description=Regenerate machine-id
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStartPre=-/bin/sh -c "/bin/rm -f -v /etc/machine-id"
+ExecStart=/bin/sh -c "/usr/bin/dbus-uuidgen --ensure=/etc/machine-id"
+ExecStartPost=/bin/sh -c "/bin/rm -f -v /lib/systemd/system/regenerate_machine_id.service"
+ExecStartPost=/bin sh -c "bin/rm -f -v /etc/systemd/system/multi-user.target.wants/regenerate_machine_id.service"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  ln -s $mountdir/lib/systemd/system/regenerate_machine_id.service $mountdir/etc/systemd/system/multi-user.target.wants/regenerate_machine_id.service
+  umount "$mountdir"
+fi
 
 #Check if we should make pi expand rootfs on next boot
 if [ "$should_skip_autoexpand" = false ]; then
