@@ -96,7 +96,7 @@ repair=false
 gzip_compress=false
 prep=false
 
-while getopts ":sdrpzh" opt; do
+while getopts ":sdcrpzh" opt; do
   case "${opt}" in
     s) should_skip_autoexpand=true ;;
     d) debug=true;;
